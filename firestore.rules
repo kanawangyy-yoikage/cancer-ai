@@ -1,0 +1,25 @@
+// firestore.rules
+// Salin aturan ini ke Firebase Console > Firestore > Rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Config: hanya bisa dibaca semua orang (untuk apiKey), tapi ditulis manual ──
+    // Untuk keamanan lebih, pertimbangkan menggunakan Cloud Functions
+    match /config/{document} {
+      allow read: if request.auth != null;
+      allow write: if false; // Hanya bisa diubah via Firebase Console atau Admin SDK
+    }
+
+    // ── Users: user hanya bisa baca/tulis datanya sendiri ──
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ── Chats: user hanya bisa akses chat miliknya sendiri ──
+    match /chats/{userId}/messages/{messageId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
