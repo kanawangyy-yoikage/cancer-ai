@@ -22,6 +22,7 @@ export default function ChatPage() {
   const [error, setError] = useState('')
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
+  const messagesAreaRef = useRef(null)
 
   // Load AI config dan chat history
   useEffect(() => {
@@ -29,13 +30,11 @@ export default function ChatPage() {
       try {
         const config = await getAIConfig()
         setAiConfig(config)
-
         if (user) {
           const history = await getChatHistory(user.uid)
           if (history.length > 0) {
             setMessages(history)
           } else {
-            // Welcome message
             setMessages([{
               id: 'welcome',
               role: 'model',
@@ -54,10 +53,24 @@ export default function ChatPage() {
     init()
   }, [user])
 
-  // Auto scroll ke bawah
+  // Auto scroll ke bawah — gunakan instant pada load, smooth saat chat
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!bottomRef.current) return
+    bottomRef.current.scrollIntoView({ behavior: messages.length <= 1 ? 'instant' : 'smooth' })
   }, [messages, isTyping])
+
+  // Handle visual viewport changes (keyboard muncul di mobile)
+  useEffect(() => {
+    if (!window.visualViewport) return
+    const handleResize = () => {
+      // Scroll ke bawah saat keyboard muncul/hilang
+      setTimeout(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }, 100)
+    }
+    window.visualViewport.addEventListener('resize', handleResize)
+    return () => window.visualViewport.removeEventListener('resize', handleResize)
+  }, [])
 
   const handleSend = useCallback(async () => {
     const text = input.trim()
@@ -70,6 +83,11 @@ export default function ChatPage() {
     setError('')
     setInput('')
 
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+    }
+
     const userMsg = {
       id: Date.now().toString(),
       role: 'user',
@@ -81,10 +99,8 @@ export default function ChatPage() {
     setIsTyping(true)
 
     try {
-      // Simpan pesan user ke Firestore
       if (user) await saveMessage(user.uid, 'user', text)
 
-      // Bangun history untuk Gemini (skip welcome msg)
       const history = messages
         .filter(m => m.id !== 'welcome')
         .map(m => ({
@@ -108,8 +124,6 @@ export default function ChatPage() {
       }
 
       setMessages(prev => [...prev, aiMsg])
-
-      // Simpan respons AI ke Firestore
       if (user) await saveMessage(user.uid, 'model', response)
     } catch (err) {
       console.error(err)
@@ -126,7 +140,9 @@ export default function ChatPage() {
   }, [input, isTyping, aiConfig, messages, user])
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter kirim hanya di desktop; di mobile Enter = newline (lebih natural)
+    const isMobile = window.innerWidth <= 768
+    if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
       e.preventDefault()
       handleSend()
     }
@@ -143,14 +159,18 @@ export default function ChatPage() {
     }])
   }
 
-  // Auto-resize textarea
   const handleInputChange = (e) => {
     setInput(e.target.value)
     const ta = textareaRef.current
     if (ta) {
       ta.style.height = 'auto'
-      ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'
+      ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
     }
+  }
+
+  const handleChipClick = (s) => {
+    setInput(s)
+    textareaRef.current?.focus()
   }
 
   const suggestions = [
@@ -189,13 +209,18 @@ export default function ChatPage() {
               </p>
             </div>
           </div>
-          <button className={`btn btn-ghost ${styles.clearBtn}`} onClick={handleClearChat} title="Hapus riwayat chat">
-            🗑️ Hapus Chat
+          <button
+            className={`btn btn-ghost ${styles.clearBtn}`}
+            onClick={handleClearChat}
+            title="Hapus riwayat chat"
+            aria-label="Hapus chat"
+          >
+            🗑️ <span>Hapus Chat</span>
           </button>
         </div>
 
         {/* Messages area */}
-        <div className={styles.messagesArea}>
+        <div className={styles.messagesArea} ref={messagesAreaRef}>
           {messages.length === 1 && messages[0].id === 'welcome' && (
             <div className={styles.suggestions}>
               <p className={styles.suggestTitle}>Coba tanyakan:</p>
@@ -204,7 +229,7 @@ export default function ChatPage() {
                   <button
                     key={i}
                     className={styles.chip}
-                    onClick={() => { setInput(s); textareaRef.current?.focus() }}
+                    onClick={() => handleChipClick(s)}
                   >
                     {s}
                   </button>
@@ -223,14 +248,14 @@ export default function ChatPage() {
           ))}
 
           {isTyping && <TypingBubble />}
-          <div ref={bottomRef} />
+          <div ref={bottomRef} style={{ height: '1px' }} />
         </div>
 
         {/* Error */}
         {error && (
           <div className={styles.errorBar}>
             ⚠️ {error}
-            <button onClick={() => setError('')}>✕</button>
+            <button onClick={() => setError('')} aria-label="Tutup error">✕</button>
           </div>
         )}
 
@@ -240,12 +265,13 @@ export default function ChatPage() {
             <textarea
               ref={textareaRef}
               className={styles.textarea}
-              placeholder="Ketik pesan... (Enter untuk kirim, Shift+Enter untuk baris baru)"
+              placeholder="Ketik pesan..."
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               rows={1}
               disabled={isTyping}
+              aria-label="Pesan"
             />
             <button
               className={styles.sendBtn}
@@ -257,7 +283,7 @@ export default function ChatPage() {
               {isTyping ? (
                 <span className={styles.sendSpinner} />
               ) : (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="22" y1="2" x2="11" y2="13"/>
                   <polygon points="22 2 15 22 11 13 2 9 22 2"/>
                 </svg>
